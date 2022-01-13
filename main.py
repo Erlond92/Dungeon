@@ -9,7 +9,6 @@ from PIL import Image
 
 floor = pygame.sprite.Group()
 wall = pygame.sprite.Group()
-player = pygame.sprite.Group()
 all_sprites = pygame.sprite.Group()
 mobs = pygame.sprite.Group()
 width_screen = GetSystemMetrics(0)
@@ -110,27 +109,47 @@ class Board:
 class Mob(AnimatedSprite):
 
     def __init__(self, name_mob, size):
-        x = width_screen - width_screen % 80
-        x -= (width_screen // 2 - size[0]) * 40 + size[0] * 80
-        y = height_screen - height_screen % 80
-        y -= (height_screen // 80 - size[1]) * 40 + size[1] * 80
-        self.rect = pygame.Rect((x, y, 64, 64))
+        left = width_screen % 80
+        top = height_screen % 80
+        self.rect = pygame.Rect((left, top, 64, 64))
         mob = load_image(f"mob/{name_mob}/down.png")
         super().__init__(mob, 4, 1, 64, 64)
         self.name_mob = name_mob
-        mob_x_in_board = random.randrange(1, size[0])
-        self.rect.x = self.rect.x + mob_x_in_board * 80
-        mob_y_in_board = random.randrange(1, size[1])
-        self.rect.y = self.rect.y + mob_y_in_board * 80
+        mob_x_in_board = random.randrange(3, size[0] - 2)
+        self.rect.x = left + mob_x_in_board * 80
+        mob_y_in_board = random.randrange(3, size[1] - 2)
+        self.rect.y = top + mob_y_in_board * 80
         self.speed = 5
         self.add(mobs)
+        self.motion_vector = "down"
+        self.last_motion_vector = "down"
+        self.atack = 10
 
     def update(self):
-        a = np.arctan((self.rect.x - coordinates[0]) /
-                      (self.rect.y - coordinates[1]))
-        x = np.sin(a) * self.speed
-        y = np.cos(a) * self.speed
-        self.rect = self.rect.move((x, y))
+        self.cur_frame = (self.cur_frame + 1) % len(self.frames)
+        self.image = self.frames[self.cur_frame]
+        self.mask = pygame.mask.from_surface(self.image)
+        x = coordinates[0] - self.rect.x
+        y = coordinates[1] - self.rect.y
+        dist = np.sqrt(x * x + y * y)
+        if dist > 0:
+            x /= dist
+            y /= dist
+        move_dist = min(self.speed, dist)
+        self.rect = self.rect.move((move_dist * x, move_dist * y))
+        if y < 0 and x < y:
+            self.motion_vector = "up"
+        elif y > 0 and x < y:
+            self.motion_vector = "down"
+        elif x < 0 and x > y:
+            self.motion_vector = "left"
+        elif x > 0 and x > y:
+            self.motion_vector = "right"
+        if self.last_motion_vector != self.motion_vector:
+            image = load_image(f"mob/{self.name_mob}/{self.motion_vector}.png")
+            super().__init__(image, 4, 1, 80 ,80)
+
+        self.last_motion_vector = self.motion_vector
 
 
 class Create_Mob:
@@ -147,41 +166,52 @@ class Create_Player(AnimatedSprite):
         self.rect = pygame.Rect((width_screen // 2, height_screen // 2,
                                       80, 80))
         super().__init__(image, 4, 1, 80, 80)
+        self.mask = pygame.mask.from_surface(self.image)
         self.add(all_sprites)
-        self.add(player)
+
+        self.speed = 10
+        self.health = 100
+        self.atack = 10
 
     def update(self):
         global last_motion_vector, coordinates
 
         coordinates = [self.rect.x, self.rect.y]
 
-        speed = 10
-
         if last_motion_vector != motion_vector:
             image = load_image(f"hero_ani/{motion_vector}.png")
             super().__init__(image, 4, 1, 80 ,80)
             if motion_vector == "up":
-                self.rect = self.rect.move((0, -speed))
+                self.rect = self.rect.move((0, -self.speed))
             elif motion_vector == "down":
-                self.rect = self.rect.move((0, speed))
+                self.rect = self.rect.move((0, self.speed))
             elif motion_vector == "right":
-                self.rect = self.rect.move((speed, 0))
+                self.rect = self.rect.move((self.speed, 0))
             elif motion_vector == "left":
-                self.rect = self.rect.move((-speed, 0))
+                self.rect = self.rect.move((-self.speed, 0))
 
         if motion and not pygame.sprite.spritecollideany(self, wall):
             self.cur_frame = (self.cur_frame + 1) % len(self.frames)
             self.image = self.frames[self.cur_frame]
+            self.mask = pygame.mask.from_surface(self.image)
             if motion_vector == "up":
-                self.rect = self.rect.move((0, -speed))
+                self.rect = self.rect.move((0, -self.speed))
             elif motion_vector == "down":
-                self.rect = self.rect.move((0, speed))
+                self.rect = self.rect.move((0, self.speed))
             elif motion_vector == "right":
-                self.rect = self.rect.move((speed, 0))
+                self.rect = self.rect.move((self.speed, 0))
             elif motion_vector == "left":
-                self.rect = self.rect.move((-speed, 0))
+                self.rect = self.rect.move((-self.speed, 0))
+
+        if pygame.sprite.spritecollideany(self, mobs):
+            pos = (self.rect.x, self.rect.y)
+            mob = pygame.sprite.spritecollide(self, mobs, dokill=False)
+            self.health -= mob[0].atack
 
         last_motion_vector = motion_vector
+
+    def draw(self):
+        screen.blit(self.image, self.rect)
 
 
 class Room(pygame.sprite.Sprite):
@@ -364,22 +394,27 @@ class Dungeon:
         last_motion_vector = "down"
         motion = False
         running = True
+        player = Create_Player()
         room_list = ["start_room", "monster_room", "chest_room", "boos_room"]
         dict_room = {"start_room": (8, 8), "chest_room": (8, 8),
                      "monster_room": (width_screen // 80 - 1, height_screen // 80 - 1),
                      "boss_room": (width_screen // 80 - 1, height_screen // 80 - 1)}
+
+        self.font = pygame.font.Font("data/acrade.ttf", height_screen // 20)
 
         for name_room in room_list[1:]:
             name_room = "monster_room"
             Create_Dungeon(name_room)
             if name_room == "monster_room":
                 Create_Mob("black_wolf", 1, dict_room[name_room])
-            Create_Player()
             player.update()
             while running:
+                self.health_text = self.font.render(f"HP: {player.health}/100",
+                                                    40, (0, 0, 0))
+                self.health_rect = self.health_text.get_rect()
                 screen.fill((81, 64, 71))
                 all_sprites.draw(screen)
-                mobs.draw(screen)
+                screen.blit(self.health_text, self.health_rect)
                 for event in pygame.event.get():
                     if event.type == pygame.KEYDOWN:
                         motion = True
@@ -398,7 +433,10 @@ class Dungeon:
                         motion = False
                 if render_position != "game":
                     running = False
-                all_sprites.update()
+                if player.health > 0:
+                    player.draw()
+                    player.update()
+                mobs.update()
                 self.clock.tick(10)
                 pygame.display.flip()
 
