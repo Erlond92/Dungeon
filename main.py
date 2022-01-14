@@ -2,7 +2,7 @@ import pygame
 import random
 import os
 import sys
-import time
+import json
 import numpy as np
 from win32api import GetSystemMetrics
 from PIL import Image
@@ -119,37 +119,49 @@ class Mob(AnimatedSprite):
         self.rect.x = left + mob_x_in_board * 80
         mob_y_in_board = random.randrange(3, size[1] - 2)
         self.rect.y = top + mob_y_in_board * 80
-        self.speed = 5
         self.add(mobs)
         self.motion_vector = "down"
         self.last_motion_vector = "down"
+        self.font = pygame.font.Font("data/acrade.ttf", height_screen // 50)
+
+        self.hp = 100
         self.atack = 10
+        self.speed = 5
 
     def update(self):
-        self.cur_frame = (self.cur_frame + 1) % len(self.frames)
-        self.image = self.frames[self.cur_frame]
-        self.mask = pygame.mask.from_surface(self.image)
-        x = coordinates[0] - self.rect.x
-        y = coordinates[1] - self.rect.y
-        dist = np.sqrt(x * x + y * y)
-        if dist > 0:
-            x /= dist
-            y /= dist
-        move_dist = min(self.speed, dist)
-        self.rect = self.rect.move((move_dist * x, move_dist * y))
-        if y < 0 and x < y:
-            self.motion_vector = "up"
-        elif y > 0 and x < y:
-            self.motion_vector = "down"
-        elif x < 0 and x > y:
-            self.motion_vector = "left"
-        elif x > 0 and x > y:
-            self.motion_vector = "right"
-        if self.last_motion_vector != self.motion_vector:
-            image = load_image(f"mob/{self.name_mob}/{self.motion_vector}.png")
-            super().__init__(image, 4, 1, 80 ,80)
+        if self.hp <= 0:
+            self.kill()
+        else:
+            self.cur_frame = (self.cur_frame + 1) % len(self.frames)
+            self.image = self.frames[self.cur_frame]
+            self.mask = pygame.mask.from_surface(self.image)
+            x = coordinates[0] - self.rect.x
+            y = coordinates[1] - self.rect.y
+            dist = np.sqrt(x * x + y * y)
+            if dist > 0:
+                x /= dist
+                y /= dist
+            move_dist = min(self.speed, dist)
+            self.rect = self.rect.move((move_dist * x, move_dist * y))
 
-        self.last_motion_vector = self.motion_vector
+            self.hp_text = self.font.render(str(self.hp), 40, (0, 0, 0))
+            self.hp_rect = self.hp_text.get_rect(center=(self.rect.x + 40, self.rect.y))
+
+            screen.blit(self.hp_text, self.hp_rect)
+
+            if y < 0 and x < y:
+                self.motion_vector = "up"
+            elif y > 0 and x < y:
+                self.motion_vector = "down"
+            elif x < 0 and x > y:
+                self.motion_vector = "left"
+            elif x > 0 and x > y:
+                self.motion_vector = "right"
+            if self.last_motion_vector != self.motion_vector:
+                image = load_image(f"mob/{self.name_mob}/{self.motion_vector}.png")
+                super().__init__(image, 4, 1, 80 ,80)
+
+            self.last_motion_vector = self.motion_vector
 
 
 class Create_Mob:
@@ -159,18 +171,34 @@ class Create_Mob:
             Mob(name_mob, size_room)
 
 
+class Atack_Player(AnimatedSprite):
+
+    def __init__(self, atack):
+        image = load_image(f"atack/Sword_UpLeft.png")
+        self.rect = pygame.Rect((width_screen // 2, height_screen // 2, 64, 80))
+        super().__init__(image, 4, 1, 64, 80)
+        self.mask = pygame.mask.from_surface(self.image)
+        self.atack = atack
+
+    def update(self, pos):
+        for sprite in mobs.sprites():
+            if sprite.rect.collidepoint(pos):
+                sprite.hp -= self.atack
+
+
 class Create_Player(AnimatedSprite):
 
     def __init__(self):
         image = load_image(f"hero_ani/{motion_vector}.png")
-        self.rect = pygame.Rect((width_screen // 2, height_screen // 2,
-                                      80, 80))
+        self.rect = pygame.Rect((width_screen // 2, height_screen // 2, 80, 80))
         super().__init__(image, 4, 1, 80, 80)
         self.mask = pygame.mask.from_surface(self.image)
         self.add(all_sprites)
+        self.font = pygame.font.Font("data/acrade.ttf", height_screen // 20)
 
+        self.max_hp = 100
         self.speed = 10
-        self.health = 100
+        self.hp = 100
         self.atack = 10
 
     def update(self):
@@ -206,11 +234,16 @@ class Create_Player(AnimatedSprite):
         if pygame.sprite.spritecollideany(self, mobs):
             pos = (self.rect.x, self.rect.y)
             mob = pygame.sprite.spritecollide(self, mobs, dokill=False)
-            self.health -= mob[0].atack
+            self.hp-= mob[0].atack
+
+        self.health_text = self.font.render(f"HP: {self.max_hp} / {self.hp}", 40, (0, 0, 0))
+        self.health_rect = self.health_text.get_rect()
 
         last_motion_vector = motion_vector
 
     def draw(self):
+        self.update()
+        screen.blit(self.health_text, self.health_rect)
         screen.blit(self.image, self.rect)
 
 
@@ -395,13 +428,11 @@ class Dungeon:
         motion = False
         running = True
         player = Create_Player()
+        atack = Atack_Player(player.atack)
         room_list = ["start_room", "monster_room", "chest_room", "boos_room"]
         dict_room = {"start_room": (8, 8), "chest_room": (8, 8),
                      "monster_room": (width_screen // 80 - 1, height_screen // 80 - 1),
                      "boss_room": (width_screen // 80 - 1, height_screen // 80 - 1)}
-
-        self.font = pygame.font.Font("data/acrade.ttf", height_screen // 20)
-
         for name_room in room_list[1:]:
             name_room = "monster_room"
             Create_Dungeon(name_room)
@@ -409,12 +440,8 @@ class Dungeon:
                 Create_Mob("black_wolf", 1, dict_room[name_room])
             player.update()
             while running:
-                self.health_text = self.font.render(f"HP: {player.health}/100",
-                                                    40, (0, 0, 0))
-                self.health_rect = self.health_text.get_rect()
                 screen.fill((81, 64, 71))
                 all_sprites.draw(screen)
-                screen.blit(self.health_text, self.health_rect)
                 for event in pygame.event.get():
                     if event.type == pygame.KEYDOWN:
                         motion = True
@@ -431,11 +458,12 @@ class Dungeon:
                             self.running = False
                     if event.type == pygame.KEYUP:
                         motion = False
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    atack.update(event.pos)
                 if render_position != "game":
                     running = False
-                if player.health > 0:
+                if player.hp > 0:
                     player.draw()
-                    player.update()
                 mobs.update()
                 self.clock.tick(10)
                 pygame.display.flip()
