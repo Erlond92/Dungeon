@@ -2,18 +2,16 @@ import pygame
 import random
 import os
 import sys
-import json
 import numpy as np
 from win32api import GetSystemMetrics
 from PIL import Image
 
-floor = pygame.sprite.Group()
-wall = pygame.sprite.Group()
 all_sprites = pygame.sprite.Group()
-mobs = pygame.sprite.Group()
 width_screen = GetSystemMetrics(0)
 height_screen = GetSystemMetrics(1)
+Door = pygame.sprite.Group()
 n_room = 0
+render_position = "menu"
 
 
 def resize_image(input_image_path, size):
@@ -131,6 +129,7 @@ class Mob(AnimatedSprite):
     def update(self):
         if self.hp <= 0:
             self.kill()
+            del self
         else:
             self.cur_frame = (self.cur_frame + 1) % len(self.frames)
             self.image = self.frames[self.cur_frame]
@@ -159,7 +158,7 @@ class Mob(AnimatedSprite):
                 self.motion_vector = "right"
             if self.last_motion_vector != self.motion_vector:
                 image = load_image(f"mob/{self.name_mob}/{self.motion_vector}.png")
-                super().__init__(image, 4, 1, 80 ,80)
+                super().__init__(image, 4, 1, 80, 80)
 
             self.last_motion_vector = self.motion_vector
 
@@ -208,7 +207,7 @@ class Create_Player(AnimatedSprite):
 
         if last_motion_vector != motion_vector:
             image = load_image(f"hero_ani/{motion_vector}.png")
-            super().__init__(image, 4, 1, 80 ,80)
+            super().__init__(image, 4, 1, 80, 80)
             if motion_vector == "up":
                 self.rect = self.rect.move((0, -self.speed))
             elif motion_vector == "down":
@@ -218,30 +217,41 @@ class Create_Player(AnimatedSprite):
             elif motion_vector == "left":
                 self.rect = self.rect.move((-self.speed, 0))
 
-        if motion and not pygame.sprite.spritecollideany(self, wall):
+        if motion and not pygame.sprite.spritecollideany(self, self.wall):
             self.cur_frame = (self.cur_frame + 1) % len(self.frames)
             self.image = self.frames[self.cur_frame]
             self.mask = pygame.mask.from_surface(self.image)
             if motion_vector == "up":
-                self.rect = self.rect.move((0, -self.speed))
+                self.rect = self.move_image((0, -self.speed))
             elif motion_vector == "down":
-                self.rect = self.rect.move((0, self.speed))
+                self.rect = self.move_image((0, self.speed))
             elif motion_vector == "right":
-                self.rect = self.rect.move((self.speed, 0))
+                self.rect = self.move_image((self.speed, 0))
             elif motion_vector == "left":
-                self.rect = self.rect.move((-self.speed, 0))
+                self.rect = self.move_image((-self.speed, 0))
 
         if pygame.sprite.spritecollideany(self, mobs):
             pos = (self.rect.x, self.rect.y)
             mob = pygame.sprite.spritecollide(self, mobs, dokill=False)
-            self.hp-= mob[0].atack
+            self.hp -= mob[0].atack
 
         self.health_text = self.font.render(f"HP: {self.max_hp} / {self.hp}", 40, (0, 0, 0))
         self.health_rect = self.health_text.get_rect()
 
         last_motion_vector = motion_vector
 
-    def draw(self):
+    def move_image(self, move):
+        self.move = pygame.sprite.Sprite(pygame.sprite.Group())
+        self.move.kill()
+        self.move.image = self.image
+        self.move.rect = self.rect.move(move)
+        if not pygame.sprite.spritecollideany(self.move, self.wall):
+            return self.move.rect
+        else:
+            return self.rect
+
+    def draw(self, w):
+        self.wall = w
         self.update()
         screen.blit(self.health_text, self.health_rect)
         screen.blit(self.image, self.rect)
@@ -250,69 +260,102 @@ class Create_Player(AnimatedSprite):
 class Room(pygame.sprite.Sprite):
 
     def __init__(self, group, filename, coordinates):
-        super().__init__(group)
         self.image = load_image(filename)
         self.rect = pygame.Rect((coordinates[0], coordinates[1], 80, 80))
-        self.add(all_sprites)
 
     def update(self):
         pass
 
 
+class Create_door(AnimatedSprite):
+
+    def __init__(self):
+        image = load_image("door_ani.png")
+        self.rect = pygame.Rect((width_screen // 2, height_screen // 2, 64, 64))
+        super().__init__(image, 14, 1, 64, 64)
+        self.rect = self.image.get_rect(center=(width_screen // 2, height_screen // 2))
+        self.kill()
+        self.add(Door)
+
+    def update(self):
+        if self.cur_frame < 13:
+            self.cur_frame += 1
+            self.image = self.frames[self.cur_frame]
+        else:
+            self.image = load_image("door.png")
+
+    def draw(self):
+        self.update()
+        screen.blit(self.image, self.rect)
+
+
 class Create_Dungeon:
 
-    def __init__(self, name_room):
+    def __init__(self):
         self.width = width_screen // 80
         self.height = height_screen // 80
         self.top = width_screen % 80 // 2
         self.left = height_screen % 80 // 2
-        self.dict_room = {"start_room": (8, 8), "chest_room": (8, 8),
-                          "monster_room": (self.width - 1, self.height - 1),
-                          "boss_room": (self.width - 1, self.height - 1)}
-        self.create_room(name_room)
+        self.dict_room = dict()
+        self.dict_size = {"start_room": (8, 8), "end_room": (8, 8),
+                          "monster_room": (width_screen // 80 - 1, height_screen // 80 - 1),
+                          "boss_room": (width_screen // 80 - 1, height_screen // 80 - 1)}
+        self.create_room()
 
-    def create_room(self, name_room):
-        s = self.dict_room[name_room]
-        for i in range(s[0]):
-            for j in range(s[1]):
-                x = width_screen - self.left
-                x -= (self.width - s[0]) * 40 + (s[0] - i) * 80
-                y = height_screen - self.top
-                y -= (self.height - s[1]) * 40 + (s[1] - j) * 80
-                if i == 0 and j == 0:
-                    Room(wall, "wall/wall_side_1.png", (x, y))
-                elif i == 0 and j == s[1] - 1:
-                    Room(wall, "wall/wall_side_2.png", (x, y))
-                elif i == s[0] - 1 and j == s[1] - 1:
-                    Room(wall, "wall/wall_side_3.png", (x, y))
-                elif i == s[0] - 1 and j == 0:
-                    Room(wall, "wall/wall_side_4.png", (x, y))
-                elif i == 0:
-                    Room(wall, "wall/wall_left.png", (x, y))
-                elif j == s[1] - 1:
-                    Room(wall, "wall/wall_bottom.png", (x, y))
-                elif i == s[0] - 1:
-                    Room(wall, "wall/wall_right.png", (x, y))
-                elif j == 0:
-                    Room(wall, "wall/wall_top.png", (x, y))
-                elif i == 1 and j == 1:
-                    Room(floor, "floor/floor_side_1.png", (x, y))
-                elif i == 1 and j == s[1] - 2:
-                    Room(floor, "floor/floor_side_2.png", (x, y))
-                elif i == s[0] - 2 and j == s[1] - 2:
-                    Room(floor, "floor/floor_side_3.png", (x, y))
-                elif i == s[0] - 2 and j == 1:
-                    Room(floor, "floor/floor_side_4.png", (x, y))
-                elif i == 1:
-                    Room(floor, "floor/floor_side_left.png", (x, y))
-                elif j == s[1] - 2:
-                    Room(floor, "floor/floor_side_bottom.png", (x, y))
-                elif i == s[0] - 2:
-                    Room(floor, "floor/floor_side_right.png", (x, y))
-                elif j == 1:
-                    Room(floor, "floor/floor_side_top.png", (x, y))
-                else:
-                    Room(floor, "floor/floor.png", (x, y))
+    def create_room(self):
+        room_list = ["start_room", "monster_room", "boss_room", "end_room"]
+        for name_room in room_list:
+            s = self.dict_size[name_room]
+            self.dict_room[name_room] = dict()
+            self.dict_room[name_room]["wall"] = pygame.sprite.Group()
+            self.dict_room[name_room]["floor"] = pygame.sprite.Group()
+            for i in range(s[0]):
+                for j in range(s[1]):
+                    sprite = pygame.sprite.Sprite()
+                    x = width_screen - self.left
+                    x -= (self.width - s[0]) * 40 + (s[0] - i) * 80
+                    y = height_screen - self.top
+                    y -= (self.height - s[1]) * 40 + (s[1] - j) * 80
+                    if i == 0 and j == 0:
+                        image = "wall/wall_side_1.png"
+                    elif i == 0 and j == s[1] - 1:
+                        image = "wall/wall_side_2.png"
+                    elif i == s[0] - 1 and j == s[1] - 1:
+                        image = "wall/wall_side_3.png"
+                    elif i == s[0] - 1 and j == 0:
+                        image = "wall/wall_side_4.png"
+                    elif i == 0:
+                        image = "wall/wall_left.png"
+                    elif j == s[1] - 1:
+                        image = "wall/wall_bottom.png"
+                    elif i == s[0] - 1:
+                        image = "wall/wall_right.png"
+                    elif j == 0:
+                        image = "wall/wall_top.png"
+                    elif i == 1 and j == 1:
+                        image = "floor/floor_side_1.png"
+                    elif i == 1 and j == s[1] - 2:
+                        image = "floor/floor_side_2.png"
+                    elif i == s[0] - 2 and j == s[1] - 2:
+                        image = "floor/floor_side_3.png"
+                    elif i == s[0] - 2 and j == 1:
+                        image = "floor/floor_side_4.png"
+                    elif i == 1:
+                        image = "floor/floor_side_left.png"
+                    elif j == s[1] - 2:
+                        image = "floor/floor_side_bottom.png"
+                    elif i == s[0] - 2:
+                        image = "floor/floor_side_right.png"
+                    elif j == 1:
+                        image = "floor/floor_side_top.png"
+                    else:
+                        image = "floor/floor.png"
+                    sprite.image = load_image(image)
+                    sprite.rect = pygame.Rect((x, y, 80, 80))
+                    if "wall" in image:
+                        sprite.add(self.dict_room[name_room]["wall"])
+                    else:
+                        sprite.add(self.dict_room[name_room]["floor"])
 
 
 class Menu:
@@ -382,9 +425,10 @@ class Dungeon:
         screen = pygame.display.set_mode((width_screen, height_screen),
                                          pygame.FULLSCREEN)
         pygame.display.set_caption("Подземелье")
-        render_position = "game"
         self.running = True
         self.clock = pygame.time.Clock()
+
+        # self.test()
 
         while self.running:
             if render_position == "menu":
@@ -396,8 +440,8 @@ class Dungeon:
                 pygame.display.flip()
                 self.game()
             elif render_position == "quit":
-                break
-        pygame.quit()
+                pygame.quit()
+                exit()
 
     def start_menu(self):
         running = True
@@ -413,35 +457,51 @@ class Dungeon:
                     self.menu.get_click(event.pos)
                 if event.type == pygame.KEYDOWN:
                     if event.key == 27:
-                        running = False
-                        self.running = False
+                        pygame.quit()
+                        exit()
             if render_position != "menu":
-                running = False
+                self.__init__()
             self.clock.tick(10)
             pygame.display.flip()
 
     def game(self):
-        global motion_vector, last_motion_vector, motion
+        global motion_vector, last_motion_vector, motion, render_postion, mobs
 
         motion_vector = "down"
         last_motion_vector = "down"
         motion = False
-        running = True
+        mobs = pygame.sprite.Group()
         player = Create_Player()
         atack = Atack_Player(player.atack)
-        room_list = ["start_room", "monster_room", "chest_room", "boos_room"]
-        dict_room = {"start_room": (8, 8), "chest_room": (8, 8),
-                     "monster_room": (width_screen // 80 - 1, height_screen // 80 - 1),
-                     "boss_room": (width_screen // 80 - 1, height_screen // 80 - 1)}
-        for name_room in room_list[1:]:
-            name_room = "monster_room"
-            Create_Dungeon(name_room)
-            if name_room == "monster_room":
-                Create_Mob("black_wolf", 1, dict_room[name_room])
-            player.update()
+        dungeon = Create_Dungeon()
+        Create_Mob("black_wolf", 7, dungeon.dict_size["monster_room"])
+        room_list = ["start_room", "monster_room", "boss_room", "end_room"]
+        for name_room in room_list:
+            door = Create_door()
+            wall = dungeon.dict_room[name_room]["wall"].copy()
+            floor = dungeon.dict_room[name_room]["floor"].copy()
+            running = True
             while running:
                 screen.fill((81, 64, 71))
-                all_sprites.draw(screen)
+                wall.draw(screen)
+                floor.draw(screen)
+                if player.hp > 0:
+                    player.draw(wall)
+                else:
+                    running = False
+                    render_postion = "menu"
+                    self.__init__()
+                if len(mobs.sprites()) == 0 or name_room != "monster_room":
+                    door.draw()
+                else:
+                    if name_room == "monster_room":
+                        for mob in mobs.sprites():
+                            mob.update()
+                            # if mob.hp <= 0:
+                            #     mob.kill()
+                            #     del mobs
+                        mobs.draw(screen)
+                pygame.display.flip()
                 for event in pygame.event.get():
                     if event.type == pygame.KEYDOWN:
                         motion = True
@@ -454,20 +514,41 @@ class Dungeon:
                         elif event.key == 100:
                             motion_vector = "right"
                         elif event.key == 27:
-                            running = False
-                            self.running = False
+                            pygame.quit()
+                            exit()
                     if event.type == pygame.KEYUP:
                         motion = False
-                if event.type == pygame.MOUSEBUTTONDOWN:
-                    atack.update(event.pos)
+                    if event.type == pygame.MOUSEBUTTONDOWN:
+                        atack.update(event.pos)
+                if pygame.sprite.spritecollideany(player, Door) and door.cur_frame > 12:
+                    break
                 if render_position != "game":
-                    running = False
-                if player.hp > 0:
-                    player.draw()
-                mobs.update()
+                    self.__init__()
                 self.clock.tick(10)
-                pygame.display.flip()
+            if name_room == "end_room":
+                render_position == "menu"
+                self.__init__()
+            for i in dungeon.dict_room[name_room]["wall"]:
+                i.kill()
+                del i
+            dungeon.dict_room[name_room]["wall"] = pygame.sprite.Group()
+            for i in dungeon.dict_room[name_room]["floor"]:
+                i.kill()
+                del i
+            dungeon.dict_room[name_room]["floor"] = pygame.sprite.Group()
+
+    def test(self):
+        dungeon = Create_Dungeon()
+        name_room = "start_room"
+        wall = dungeon.dict_room[name_room]["wall"]
+        floor = dungeon.dict_room[name_room]["floor"]
+        while True:
+            screen.fill((81, 64, 71))
+            wall.draw(screen)
+            floor.draw(screen)
+            pygame.display.flip()
 
 
 if __name__ == '__main__':
     Dungeon()
+    pygame.quit()
