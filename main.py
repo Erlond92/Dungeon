@@ -3,15 +3,25 @@ import random
 import os
 import sys
 import numpy as np
+import sqlite3
+from datetime import datetime
 from win32api import GetSystemMetrics
 from PIL import Image
+
+db = sqlite3.connect("data/histori.db")
+sql = db.cursor()
 
 all_sprites = pygame.sprite.Group()
 width_screen = GetSystemMetrics(0)
 height_screen = GetSystemMetrics(1)
 Door = pygame.sprite.Group()
+atack_sprites = pygame.sprite.Group()
 n_room = 0
 render_position = "menu"
+mob_list = ["black_wolf", "snake", "green_snake"]
+
+with open("data/histori.txt", encoding="utf-8") as f:
+    histori = str(f.read())
 
 
 def resize_image(input_image_path, size):
@@ -111,7 +121,7 @@ class Mob(AnimatedSprite):
         top = height_screen % 80
         self.rect = pygame.Rect((left, top, 64, 64))
         mob = load_image(f"mob/{name_mob}/down.png")
-        super().__init__(mob, 4, 1, 64, 64)
+        super().__init__(mob, 8, 1, 64, 64)
         self.name_mob = name_mob
         mob_x_in_board = random.randrange(3, size[0] - 2)
         self.rect.x = left + mob_x_in_board * 80
@@ -122,15 +132,15 @@ class Mob(AnimatedSprite):
         self.last_motion_vector = "down"
         self.font = pygame.font.Font("data/acrade.ttf", height_screen // 50)
 
+        self.max_hp = 100
         self.hp = 100
         self.atack = 10
         self.speed = 5
 
+        Mob_list.append(self)
+
     def update(self):
-        if self.hp <= 0:
-            self.kill()
-            del self
-        else:
+        if self.hp > 0:
             self.cur_frame = (self.cur_frame + 1) % len(self.frames)
             self.image = self.frames[self.cur_frame]
             self.mask = pygame.mask.from_surface(self.image)
@@ -158,47 +168,84 @@ class Mob(AnimatedSprite):
                 self.motion_vector = "right"
             if self.last_motion_vector != self.motion_vector:
                 image = load_image(f"mob/{self.name_mob}/{self.motion_vector}.png")
-                super().__init__(image, 4, 1, 80, 80)
+                super().__init__(image, 8, 1, 80, 80)
 
             self.last_motion_vector = self.motion_vector
+            screen.blit(self.image, self.rect)
 
 
 class Create_Mob:
 
-    def __init__(self, name_mob, n, size_room):
+    def __init__(self, n, size_room):
         for _ in range(n):
-            Mob(name_mob, size_room)
+            Mob(random.choice(mob_list), size_room)
 
 
 class Atack_Player(AnimatedSprite):
 
-    def __init__(self, atack):
-        image = load_image(f"atack/Sword_UpLeft.png")
-        self.rect = pygame.Rect((width_screen // 2, height_screen // 2, 64, 80))
-        super().__init__(image, 4, 1, 64, 80)
+    def __init__(self, pos, name_atack):
+        self.speed = 10
+        x = pos[0] - int(coordinates[0])
+        y = pos[1] - int(coordinates[1])
+        dist = np.sqrt(x * x + y * y)
+        if dist > 0:
+            x /= dist
+            y /= dist
+        move_dist = min(self.speed, dist)
+        self.move = (move_dist * x, move_dist * y)
+        if abs(x) > abs(y):
+            if x > 0:
+                v = "right"
+            else:
+                v = "left"
+        else:
+            if y > 0:
+                v = "down"
+            else:
+                v = "top"
+        image = load_image(f"atack/{name_atack}_{v}.png")
+        self.rect = pygame.Rect((coordinates[0], coordinates[1], 64, 64))
+        if name_atack == "Energy_Ball":
+            super().__init__(image, 9, 1, 32, 32)
+            self.atack = 10
+            self.mp = 10
+        elif name_atack == "Fire_Ball":
+            super().__init__(image, 45, 1, 64, 64)
+            self.atack = 50
+            self.mp = 25
         self.mask = pygame.mask.from_surface(self.image)
-        self.atack = atack
+        self.add(atack_sprites)
 
-    def update(self, pos):
-        for sprite in mobs.sprites():
-            if sprite.rect.collidepoint(pos):
-                sprite.hp -= self.atack
+    def update(self):
+        self.cur_frame += 1
+        self.image = self.frames[self.cur_frame % len(self.frames)]
+        self.rect = self.rect.move(self.move)
+        screen.blit(self.image, self.rect)
+        if pygame.sprite.spritecollideany(self, mobs):
+            for mob in pygame.sprite.spritecollide(self, mobs, False):
+                if mob.hp > 0:
+                    mob.hp -= self.atack
+                    self.kill()
+                    del self
+                    break
 
 
 class Create_Player(AnimatedSprite):
 
     def __init__(self):
+        global check
+
         image = load_image(f"hero_ani/{motion_vector}.png")
         self.rect = pygame.Rect((width_screen // 2, height_screen // 2, 80, 80))
         super().__init__(image, 4, 1, 80, 80)
         self.mask = pygame.mask.from_surface(self.image)
-        self.add(all_sprites)
-        self.font = pygame.font.Font("data/acrade.ttf", height_screen // 20)
-
         self.max_hp = 100
+        self.max_mp = 100
         self.speed = 10
         self.hp = 100
+        self.mp = 100
         self.atack = 10
+        self.font = pygame.font.Font("data/acrade.ttf", height_screen // 20)
 
     def update(self):
         global last_motion_vector, coordinates
@@ -232,11 +279,17 @@ class Create_Player(AnimatedSprite):
 
         if pygame.sprite.spritecollideany(self, mobs):
             pos = (self.rect.x, self.rect.y)
-            mob = pygame.sprite.spritecollide(self, mobs, dokill=False)
-            self.hp -= mob[0].atack
+            collide_mob = pygame.sprite.spritecollide(self, mobs, dokill=False)
+            for mob in collide_mob:
+                if mob.hp > 0:
+                    c.check -= mob.atack
+                    self.hp -= mob.atack
 
-        self.health_text = self.font.render(f"HP: {self.max_hp} / {self.hp}", 40, (0, 0, 0))
-        self.health_rect = self.health_text.get_rect()
+        self.hp_text = self.font.render(f"HP: {self.max_hp} / {self.hp}", 40, (0, 0, 0))
+        self.hp_rect = self.hp_text.get_rect()
+
+        self.mp_text = self.font.render(f"MP: {self.max_mp} / {self.mp}", 40, (0, 0, 0))
+        self.mp_rect = pygame.Rect((0, self.hp_rect.y + self.hp_rect.h, self.hp_rect.w, self.hp_rect.h))
 
         last_motion_vector = motion_vector
 
@@ -253,7 +306,8 @@ class Create_Player(AnimatedSprite):
     def draw(self, w):
         self.wall = w
         self.update()
-        screen.blit(self.health_text, self.health_rect)
+        screen.blit(self.hp_text, self.hp_rect)
+        screen.blit(self.mp_text, self.mp_rect)
         screen.blit(self.image, self.rect)
 
 
@@ -267,7 +321,7 @@ class Room(pygame.sprite.Sprite):
         pass
 
 
-class Create_door(AnimatedSprite):
+class Create_Door(AnimatedSprite):
 
     def __init__(self):
         image = load_image("door_ani.png")
@@ -361,6 +415,10 @@ class Create_Dungeon:
 class Menu:
 
     def __init__(self, size):
+        global check
+
+        check = 0
+
         resize_image("data/start_menu.jpeg", size)
         self.wallpaper = load_image("start_menu.jpeg")
 
@@ -374,18 +432,17 @@ class Menu:
         self.start_rect = self.start.get_rect(center=(size[0] // 2,
                                                       size[1] // 2))
 
-        self.setting = font.render("Setting", 40, (150, 111, 95))
-        setting_rect = (size[0] // 2, size[1] // 2 + size[1] // 6)
-        self.setting_rect = self.setting.get_rect(center=setting_rect)
+        # self.setting = font.render("Setting", 40, (150, 111, 95))
+        # setting_rect = (size[0] // 2, size[1] // 2 + size[1] // 6)
+        # self.setting_rect = self.setting.get_rect(center=setting_rect)
 
         self.quit = font.render("Quit Game", 40, (150, 111, 95))
-        self.quit_rect = self.quit.get_rect(center=(size[0] // 2,
-                                                    size[1] - size[1] // 6))
+        self.quit_rect = self.quit.get_rect(center=(size[0] // 2, size[1] // 2 + size[1] // 6))
 
     def render(self):
         screen.blit(self.wallpaper, (0, 0))
         screen.blit(self.start, self.start_rect)
-        screen.blit(self.setting, self.setting_rect)
+        # screen.blit(self.setting, self.setting_rect)
         screen.blit(self.name, self.name_rect)
         screen.blit(self.quit, self.quit_rect)
 
@@ -399,8 +456,8 @@ class Menu:
     def get_cell(self, pos):
         if self.start_rect.collidepoint(pos):
             return "game"
-        elif self.setting_rect.collidepoint(pos):
-            return "setting"
+        # elif self.setting_rect.collidepoint(pos):
+        #     return "setting"
         elif self.quit_rect.collidepoint(pos):
             return "quit"
         else:
@@ -416,19 +473,86 @@ class Menu:
             render_position = text
 
 
+class Histori:
+
+    def __init__(self):
+        self.font = pygame.font.Font("data/histori.otf", height_screen // 20)
+        self.n = 1
+        self.space = self.font.size(" ")[0]
+        self.text_dict = dict()
+        self.clock = pygame.time.Clock()
+        self.full = True
+
+    def update(self):
+        self.text = ""
+        self.t = self.font.render(self.text, 40, (255, 255, 255))
+        self.rect = self.t.get_rect(center=(width_screen // 2, height_screen // 2))
+        for word in histori.split(" "):
+            if self.rect.w + self.space * 2 + self.font.render(word, 40, "white").get_rect().w >= width_screen:
+                self.text_dict[self.t] = self.rect
+                for key in self.text_dict.keys():
+                    self.text_dict[key] = self.text_dict[key].move((0, -1 * (self.rect.h + 10)))
+                self.text = ""
+            for i in range(len(word)):
+                for event in pygame.event.get():
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == 27:
+                            quit()
+                screen.fill((0, 0, 0))
+                self.text += word[i]
+                self.t = self.font.render(self.text, True, (255, 255, 255))
+                self.rect = self.t.get_rect(center=(width_screen // 2, height_screen // 2))
+                if self.full:
+                    if self.text_dict.keys():
+                        for item in self.text_dict.items():
+                            screen.blit(item[0], item[1])
+                        screen.blit(self.t, self.rect)
+                    else:
+                        screen.blit(self.t, self.rect)
+                    pygame.display.flip()
+                    self.clock.tick(10)
+            self.text += " "
+        for item in self.text_dict.items():
+            screen.blit(item[0], item[1])
+        screen.blit(self.t, self.rect)
+        pygame.display.flip()
+
+    def draw(self):
+        self.full = False
+
+
+class Check:
+
+    def __init__(self):
+        self.check = 0
+        self.font = pygame.font.Font("data/histori.otf", height_screen // 20)
+        self.n = 255
+        self.run = True
+
+    def update(self):
+        self.text = self.font.render(f"Счёт: {self.check}", 40, (self.n, self.n, self.n))
+        self.rect = self.text.get_rect(center=(width_screen // 2, height_screen // 2))
+        screen.blit(self.text, self.rect)
+        if self.n == 255:
+            self.run = False
+        elif self.n == 0:
+            self.run = True
+        if self.run:
+            self.n += 1
+        else:
+            self.n -= 1
+
+
 class Dungeon:
 
     def __init__(self):
         global screen, render_position
 
         pygame.init()
-        screen = pygame.display.set_mode((width_screen, height_screen),
-                                         pygame.FULLSCREEN)
+        screen = pygame.display.set_mode((width_screen, height_screen), pygame.FULLSCREEN)
         pygame.display.set_caption("Подземелье")
         self.running = True
         self.clock = pygame.time.Clock()
-
-        # self.test()
 
         while self.running:
             if render_position == "menu":
@@ -465,42 +589,53 @@ class Dungeon:
             pygame.display.flip()
 
     def game(self):
-        global motion_vector, last_motion_vector, motion, render_postion, mobs
+        global motion_vector, last_motion_vector, motion, render_postion, mobs, Mob_list, c
 
+        h = Histori()
+        h.update()
+
+        c = Check()
+        Mob_list = []
         motion_vector = "down"
         last_motion_vector = "down"
         motion = False
         mobs = pygame.sprite.Group()
         player = Create_Player()
-        atack = Atack_Player(player.atack)
         dungeon = Create_Dungeon()
-        Create_Mob("black_wolf", 7, dungeon.dict_size["monster_room"])
-        room_list = ["start_room", "monster_room", "boss_room", "end_room"]
+        Create_Mob(7, dungeon.dict_size["monster_room"])
+        room_list = ["start_room", "monster_room", "monster_room"]
         for name_room in room_list:
-            door = Create_door()
+            door = Create_Door()
             wall = dungeon.dict_room[name_room]["wall"].copy()
             floor = dungeon.dict_room[name_room]["floor"].copy()
             running = True
             while running:
+                if player.mp + 2 < player.max_mp:
+                    player.mp += 2
+                else:
+                    player.mp = player.max_mp
                 screen.fill((81, 64, 71))
                 wall.draw(screen)
                 floor.draw(screen)
                 if player.hp > 0:
                     player.draw(wall)
                 else:
-                    running = False
-                    render_postion = "menu"
-                    self.__init__()
-                if len(mobs.sprites()) == 0 or name_room != "monster_room":
+                    self.start_menu()
+                if name_room != "monster_room" or all(i.hp <= 0 for i in mobs.sprites()):
                     door.draw()
+                    atack_sprites.empty()
                 else:
                     if name_room == "monster_room":
-                        for mob in mobs.sprites():
-                            mob.update()
-                            # if mob.hp <= 0:
-                            #     mob.kill()
-                            #     del mobs
-                        mobs.draw(screen)
+                        for mob in Mob_list:
+                            if mob.hp > 0:
+                                mob.update()
+                        c.check += mob.max_hp * (len(Mob_list) -  len(list(filter(lambda x: x.hp > 0, Mob_list))))
+                        Mob_list = list(filter(lambda x: x.hp > 0, Mob_list))
+                for sprite in atack_sprites:
+                    if pygame.sprite.spritecollideany(sprite, wall):
+                        sprite.kill()
+                        del sprite
+                atack_sprites.update()
                 pygame.display.flip()
                 for event in pygame.event.get():
                     if event.type == pygame.KEYDOWN:
@@ -519,15 +654,17 @@ class Dungeon:
                     if event.type == pygame.KEYUP:
                         motion = False
                     if event.type == pygame.MOUSEBUTTONDOWN:
-                        atack.update(event.pos)
+                        if event.button == 1 and player.mp >= 15:
+                            Atack_Player(event.pos, "Energy_Ball")
+                            player.mp -= 15
+                        elif event.button == 3 and player.mp >= 45:
+                            Atack_Player(event.pos, "Fire_Ball")
+                            player.mp -= 45
                 if pygame.sprite.spritecollideany(player, Door) and door.cur_frame > 12:
                     break
                 if render_position != "game":
                     self.__init__()
-                self.clock.tick(10)
-            if name_room == "end_room":
-                render_position == "menu"
-                self.__init__()
+                self.clock.tick(12)
             for i in dungeon.dict_room[name_room]["wall"]:
                 i.kill()
                 del i
@@ -536,19 +673,29 @@ class Dungeon:
                 i.kill()
                 del i
             dungeon.dict_room[name_room]["floor"] = pygame.sprite.Group()
+        c.check += 10 * int(player.hp)
+        self.end()
 
-    def test(self):
-        dungeon = Create_Dungeon()
-        name_room = "start_room"
-        wall = dungeon.dict_room[name_room]["wall"]
-        floor = dungeon.dict_room[name_room]["floor"]
-        while True:
-            screen.fill((81, 64, 71))
-            wall.draw(screen)
-            floor.draw(screen)
+    def end(self):
+        global render_postion
+        running = True
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.KEYDOWN or event.type == pygame.MOUSEBUTTONDOWN:
+                    running = False
+            screen.fill((0, 0, 0))
+            c.update()
             pygame.display.flip()
+            self.clock.tick(100)
+        screen.fill((0, 0, 0))
+        pygame.display.flip()
+
+        time = "".join(str(datetime.now()).split(","))
+        sql.execute(f"INSERT INTO Histori VALUES ('{time}', '{c.check}')")
+        db.commit()
+        render_postion = "menu"
+        self.start_menu()
 
 
 if __name__ == '__main__':
     Dungeon()
-    pygame.quit()
