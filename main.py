@@ -494,6 +494,9 @@ class Histori:
                 for key in self.text_dict.keys():
                     self.text_dict[key] = self.text_dict[key].move((0, -1 * (self.rect.h + 10)))
                 self.text = ""
+            for event in pygame.event.get():
+                if event.type in [pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN]:
+                    self.full = False
             for i in range(len(word)):
                 for event in pygame.event.get():
                     if event.type == pygame.KEYDOWN:
@@ -596,8 +599,8 @@ class Dungeon:
     def game(self):
         global motion_vector, last_motion_vector, motion, render_postion, mobs, Mob_list, c
 
-        # h = Histori()
-        # h.update()
+        h = Histori()
+        h.update()
 
         c = Check()
         Mob_list = []
