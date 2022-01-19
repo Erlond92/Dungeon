@@ -353,11 +353,12 @@ class Create_Dungeon:
         self.dict_room = dict()
         self.dict_size = {"start_room": (8, 8), "end_room": (8, 8),
                           "monster_room": (width_screen // 80 - 1, height_screen // 80 - 1),
+                          "small_monster_room": (width_screen // 80 - 3, height_screen // 80 - 3),
                           "boss_room": (width_screen // 80 - 1, height_screen // 80 - 1)}
         self.create_room()
 
     def create_room(self):
-        room_list = ["start_room", "monster_room", "boss_room", "end_room"]
+        room_list = ["start_room", "monster_room", "small_monster_room"]
         for name_room in room_list:
             s = self.dict_size[name_room]
             self.dict_room[name_room] = dict()
@@ -549,6 +550,7 @@ class Dungeon:
         global screen, render_position
 
         pygame.init()
+        pygame.mixer.init()
         screen = pygame.display.set_mode((width_screen, height_screen), pygame.FULLSCREEN)
         pygame.display.set_caption("Подземелье")
         self.running = True
@@ -570,6 +572,7 @@ class Dungeon:
     def start_menu(self):
         running = True
         self.menu = Menu((width_screen, height_screen))
+        sound_click = pygame.mixer.Sound("data/click.ogg")
 
         while running:
             self.menu.render()
@@ -579,20 +582,22 @@ class Dungeon:
                     self.running = False
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     self.menu.get_click(event.pos)
+                    sound_click.play()
                 if event.type == pygame.KEYDOWN:
                     if event.key == 27:
                         pygame.quit()
                         exit()
             if render_position != "menu":
                 self.__init__()
-            self.clock.tick(10)
+            sound_click.stop()
             pygame.display.flip()
+            self.clock.tick(10)
 
     def game(self):
         global motion_vector, last_motion_vector, motion, render_postion, mobs, Mob_list, c
 
-        h = Histori()
-        h.update()
+        # h = Histori()
+        # h.update()
 
         c = Check()
         Mob_list = []
@@ -602,13 +607,16 @@ class Dungeon:
         mobs = pygame.sprite.Group()
         player = Create_Player()
         dungeon = Create_Dungeon()
-        Create_Mob(7, dungeon.dict_size["monster_room"])
-        room_list = ["start_room", "monster_room", "monster_room"]
+        room_list = ["start_room", "monster_room", "small_monster_room"]
         for name_room in room_list:
             door = Create_Door()
             wall = dungeon.dict_room[name_room]["wall"].copy()
             floor = dungeon.dict_room[name_room]["floor"].copy()
             running = True
+            if name_room == "monster_room":
+                Create_Mob(7, dungeon.dict_size["monster_room"])
+            elif name_room == "small_monster_room":
+                Create_Mob(15, dungeon.dict_size["small_monster_room"])
             while running:
                 if player.mp + 2 < player.max_mp:
                     player.mp += 2
@@ -621,11 +629,11 @@ class Dungeon:
                     player.draw(wall)
                 else:
                     self.start_menu()
-                if name_room != "monster_room" or all(i.hp <= 0 for i in mobs.sprites()):
+                if (name_room != "monster_room" or name_room != "small_monster_room") and len(Mob_list) == 0:
                     door.draw()
                     atack_sprites.empty()
                 else:
-                    if name_room == "monster_room":
+                    if name_room == "monster_room" or name_room == "small_monster_room":
                         for mob in Mob_list:
                             if mob.hp > 0:
                                 mob.update()
